@@ -1,11 +1,14 @@
 use egui_winit::winit::event::{ElementState, Event, WindowEvent};
-use winit::keyboard::PhysicalKey;
+use winit::{
+    event::KeyEvent,
+    keyboard::{KeyCode, PhysicalKey},
+};
 
 use std::collections::HashMap;
 
 pub struct Keyboard {
-    keys: HashMap<PhysicalKey, bool>,
-    this_frame: HashMap<PhysicalKey, bool>,
+    keys: HashMap<KeyCode, bool>,
+    this_frame: HashMap<KeyCode, bool>,
 }
 
 impl Keyboard {
@@ -17,12 +20,12 @@ impl Keyboard {
         }
     }
 
-    fn press(&mut self, key: PhysicalKey) {
+    fn press(&mut self, key: KeyCode) {
         self.keys.insert(key, true);
         self.this_frame.insert(key, true);
     }
 
-    fn release(&mut self, key: PhysicalKey) {
+    fn release(&mut self, key: KeyCode) {
         self.keys.insert(key, false);
         self.this_frame.insert(key, true);
     }
@@ -31,23 +34,32 @@ impl Keyboard {
     pub fn handle_event(&mut self, event: &Event<()>) {
         if let Event::WindowEvent {
             window_id: _,
-            event: WindowEvent::KeyboardInput { event, .. },
+            event:
+                WindowEvent::KeyboardInput {
+                    event:
+                        KeyEvent {
+                            physical_key: PhysicalKey::Code(key_code),
+                            state,
+                            ..
+                        },
+                    ..
+                },
         } = event
         {
-            if event.state == ElementState::Pressed {
-                self.press(event.physical_key);
+            if *state == ElementState::Pressed {
+                self.press(*key_code);
             } else {
-                self.release(event.physical_key);
+                self.release(*key_code);
             }
         }
     }
 
     /// Returns if this key was pressed down on this frame
     #[must_use]
-    pub fn pressed_this_frame(&self, key: &PhysicalKey) -> bool {
-        match self.keys.get(key) {
+    pub fn pressed_this_frame(&self, key: KeyCode) -> bool {
+        match self.keys.get(&key) {
             None | Some(false) => false,
-            Some(true) => match self.this_frame.get(key) {
+            Some(true) => match self.this_frame.get(&key) {
                 None | Some(false) => false,
                 Some(true) => true,
             },
@@ -56,10 +68,10 @@ impl Keyboard {
 
     /// Returns if this key was released on this frame
     #[must_use]
-    pub fn released_this_frame(&self, key: &PhysicalKey) -> bool {
-        match self.keys.get(key) {
+    pub fn released_this_frame(&self, key: KeyCode) -> bool {
+        match self.keys.get(&key) {
             Some(true) => false,
-            None | Some(false) => match self.this_frame.get(key) {
+            None | Some(false) => match self.this_frame.get(&key) {
                 None | Some(false) => false,
                 Some(true) => true,
             },
@@ -68,8 +80,8 @@ impl Keyboard {
 
     /// Returns if the key is currently held down
     #[must_use]
-    pub fn is_pressed(&self, key: &PhysicalKey) -> bool {
-        match self.keys.get(key) {
+    pub fn is_pressed(&self, key: KeyCode) -> bool {
+        match self.keys.get(&key) {
             None | Some(false) => false,
             Some(true) => true,
         }

@@ -11,11 +11,26 @@ edition = "2021"
 wgpu_app = { path = "wgpu-app" }
 winit = "0.29.15"
 wgpu = "0.19.3"
+
 egui = "0.27.2"
-miniz_oxide = "0.7.4"
-quartz_nbt = "0.2.9"
+
+glam = "0.28.0" # Maths
+
+miniz_oxide = "0.7.4" # ZLib compression
+quartz_nbt = "0.2.9"  # NBT
+
 serde = "1.0.203"
 serde_json = "1.0.117"
+serde_yaml = "0.9.34"
 base64 = "0.22.1"
-glam = "0.28.0"
+image = { version = "0.25.1", features = ["jpeg", "png"] }
+
+directories-next = "2.0.0" # Config directories
+
+chrono = "0.4.38"
+
 mcproto-rs = { version = "0.2.0", default-features = false, features = ["v1_16_3", "std"] }
+thiserror = "1.0.61"
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+Inflector = "0.11.4"

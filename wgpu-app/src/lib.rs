@@ -23,7 +23,7 @@ pub trait Application {
     /// Called every frame after `Self::update` to render the applicaton
     /// # Errors
     /// Can return an error if the `wgpu::Surface` could not be written
-    fn render(&self, t: &Timer, ctx: &mut Context) -> Result<(), wgpu::SurfaceError>;
+    fn render(&mut self, t: &Timer, ctx: &mut Context) -> Result<(), wgpu::SurfaceError>;
     /// Called when the window is requested to close
     fn close(&mut self, ctx: &Context);
     /// Called a number of times between each frame with all new incoming events for the application

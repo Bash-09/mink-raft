@@ -1,27 +1,71 @@
-use wgpu_app::Application;
+use std::collections::HashMap;
+
+use mcproto_rs::status;
+use server::Server;
+use settings::Settings;
+use tracing_subscriber::{prelude::*, EnvFilter};
+use wgpu_app::{utils::persistent_window::PersistentWindowManager, Application};
 use winit::{dpi::PhysicalSize, window::WindowBuilder};
 
 pub mod chat;
+pub mod entities;
 pub mod gui;
+pub mod network;
+pub mod player;
+pub mod resources;
 pub mod server;
+pub mod settings;
+pub mod world;
 
-struct App {}
+pub type WindowManagerType = App;
+pub type WindowManager = PersistentWindowManager<WindowManagerType>;
+
+struct App {
+    settings: Settings,
+
+    server: Option<Server>,
+
+    pub outstanding_server_pings: HashMap<String, Server>,
+    pub server_pings: HashMap<String, status::StatusSpec>,
+    // pub icon_handles: HashMap<String, RetainedImage>,
+    pub window_manager: PersistentWindowManager<WindowManagerType>,
+}
 
 impl App {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            settings: Settings::load()
+                .map_err(|e| tracing::error!("Couldn't load settings ({e}), creating new."))
+                .unwrap_or_default(),
+            server: None,
+
+            outstanding_server_pings: HashMap::new(),
+            server_pings: HashMap::new(),
+
+            window_manager: PersistentWindowManager::new(),
+        }
+    }
+
+    pub const fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
+    pub fn settings_mut(&mut self) -> &mut Settings {
+        &mut self.settings
     }
 }
 
 impl Application for App {
-    fn init(&mut self, ctx: &mut wgpu_app::context::Context) {
-        println!("Opening!");
+    fn init(&mut self, _ctx: &mut wgpu_app::context::Context) {
+        tracing::info!("Opening!");
     }
 
-    fn update(&mut self, t: &wgpu_app::Timer, ctx: &mut wgpu_app::context::Context) {}
+    fn update(&mut self, t: &wgpu_app::Timer, ctx: &mut wgpu_app::context::Context) {
+        let delta = t.delta();
+    }
 
     fn render(
-        &self,
+        &mut self,
         t: &wgpu_app::Timer,
         ctx: &mut wgpu_app::context::Context,
     ) -> Result<(), wgpu::SurfaceError> {
@@ -66,11 +110,7 @@ impl Application for App {
         // *********************** Egui
         ctx.egui
             .render(&mut ctx.wgpu_state, &view, &mut encoder, |gui_ctx| {
-                gui::fps_counter(gui_ctx, t.fps(), t.delta());
-
-                egui::Window::new("Memory").show(gui_ctx, |ui| {
-                    ui.heading("Cum");
-                });
+                gui::render(gui_ctx, self, t);
             });
 
         // Render
@@ -81,19 +121,26 @@ impl Application for App {
         Ok(())
     }
 
-    fn close(&mut self, ctx: &wgpu_app::context::Context) {
-        println!("Closing");
+    fn close(&mut self, _ctx: &wgpu_app::context::Context) {
+        tracing::info!("Closing");
+
+        self.settings
+            .save()
+            .map_err(|e| tracing::error!("Couldn't save settings ({e})"))
+            .ok();
     }
 
     fn handle_event(
         &mut self,
-        ctx: &mut wgpu_app::context::Context,
-        event: &winit::event::Event<()>,
+        _ctx: &mut wgpu_app::context::Context,
+        _event: &winit::event::Event<()>,
     ) {
     }
 }
 
 fn main() {
+    init_tracing();
+
     let wb = WindowBuilder::new()
         .with_title("Mink Raft :3")
         .with_inner_size(PhysicalSize::new(1200, 700))
@@ -102,4 +149,18 @@ fn main() {
     let app = App::new();
 
     wgpu_app::run(app, wb);
+}
+
+pub fn init_tracing() {
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "info");
+    }
+
+    let subscriber = tracing_subscriber::registry().with(
+        tracing_subscriber::fmt::layer()
+            .with_writer(std::io::stderr)
+            .with_filter(EnvFilter::from_default_env()),
+    );
+
+    subscriber.init();
 }
