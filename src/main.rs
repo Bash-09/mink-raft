@@ -5,7 +5,11 @@ use server::Server;
 use settings::Settings;
 use tracing_subscriber::{prelude::*, EnvFilter};
 use wgpu_app::{utils::persistent_window::PersistentWindowManager, Application};
-use winit::{dpi::PhysicalSize, window::WindowBuilder};
+use winit::{
+    dpi::{PhysicalPosition, PhysicalSize},
+    event::WindowEvent,
+    window::WindowBuilder,
+};
 
 pub mod chat;
 pub mod entities;
@@ -17,8 +21,8 @@ pub mod server;
 pub mod settings;
 pub mod world;
 
-pub type WindowManagerType = App;
-pub type WindowManager = PersistentWindowManager<WindowManagerType>;
+type WindowManagerType = App;
+type WindowManager = PersistentWindowManager<WindowManagerType>;
 
 struct App {
     settings: Settings,
@@ -133,20 +137,41 @@ impl Application for App {
     fn handle_event(
         &mut self,
         _ctx: &mut wgpu_app::context::Context,
-        _event: &winit::event::Event<()>,
+        event: &winit::event::Event<()>,
     ) {
+        match event {
+            winit::event::Event::WindowEvent {
+                window_id: _,
+                event: WindowEvent::Resized(new_size),
+            } => {
+                self.settings.window_size = [new_size.width, new_size.height];
+            }
+            winit::event::Event::WindowEvent {
+                window_id: _,
+                event: WindowEvent::Moved(new_pos),
+            } => {
+                self.settings.window_pos = Some([new_pos.x, new_pos.y]);
+            }
+            _ => {}
+        }
     }
 }
 
 fn main() {
     init_tracing();
 
-    let wb = WindowBuilder::new()
+    let app = App::new();
+
+    let &[w, h] = &app.settings.window_size;
+    let mut wb = WindowBuilder::new()
         .with_title("Mink Raft :3")
-        .with_inner_size(PhysicalSize::new(1200, 700))
+        .with_inner_size(PhysicalSize::new(w, h))
+        .with_min_inner_size(PhysicalSize::new(200, 200))
         .with_resizable(true);
 
-    let app = App::new();
+    if let Some(&[x, y]) = app.settings.window_pos.as_ref() {
+        wb = wb.with_position(PhysicalPosition::new(x, y));
+    }
 
     wgpu_app::run(app, wb);
 }

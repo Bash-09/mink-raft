@@ -11,6 +11,9 @@ pub struct Settings {
     pub show_fps: bool,
     pub vsync: bool,
 
+    pub window_pos: Option<[i32; 2]>,
+    pub window_size: [u32; 2],
+
     pub mouse_sensitivity: f64,
     pub fov: f64,
 
@@ -46,6 +49,9 @@ impl Default for Settings {
             direct_connection: String::new(),
             show_fps: true,
             vsync: true,
+
+            window_pos: None,
+            window_size: [1200, 700],
 
             mouse_sensitivity: 1.0,
             fov: 90.0,
