@@ -2,14 +2,14 @@ use std::collections::HashMap;
 
 use egui::{Context, Id};
 
-use crate::{entities::Entity, server::Server};
+use crate::{entities::Entity, resources::entities, server::Server};
 
 pub fn render(gui_ctx: &Context, server: &Server) {
     egui::Window::new(format!("Entities: {}", server.get_entities().len()))
         .id(Id::new("Entities"))
         .show(gui_ctx, |ui| {
             let mut ents: HashMap<u32, Vec<&Entity>> = HashMap::new();
-            for (id, e) in server.get_entities() {
+            for e in server.get_entities().values() {
                 match ents.get_mut(&e.entity_type) {
                     Some(vec) => {
                         vec.push(e);
@@ -22,7 +22,7 @@ pub fn render(gui_ctx: &Context, server: &Server) {
 
             // Dump entities into a vector
             let mut ents_vec: Vec<(&u32, &Vec<&Entity>)> = Vec::new();
-            for (type_id, e) in ents.iter() {
+            for (type_id, e) in &ents {
                 ents_vec.push((type_id, e));
             }
             // Sort by entity id
@@ -30,8 +30,9 @@ pub fn render(gui_ctx: &Context, server: &Server) {
 
             // List each present type of entity under dropdown menus
             for (type_id, ent) in ents_vec {
-                // let name = &ENTITIES.get(type_id).unwrap().name;
-                let name = format!("{type_id}");
+                let name = entities()
+                    .get(type_id)
+                    .map_or_else(|| "Unknown", |e| e.name.as_str());
 
                 egui::CollapsingHeader::new(format!("{} ({})", name, ent.len()))
                     .id_source(Id::new(name))

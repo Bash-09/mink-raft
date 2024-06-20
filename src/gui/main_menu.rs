@@ -8,6 +8,7 @@ use crate::{
     App,
 };
 
+#[allow(clippy::too_many_lines)]
 pub fn render(gui_ctx: &Context, cli: &mut App) -> Option<Server> {
     let mut serv = None;
 
@@ -93,7 +94,7 @@ pub fn render(gui_ctx: &Context, cli: &mut App) -> Option<Server> {
                                 tracing::info!("Attempting to connect");
                                 match NetworkManager::connect(&s.ip) {
                                     Ok(server) => {
-                                        server.send_command(NetworkCommand::RequestStatus).unwrap();
+                                        server.send_command(NetworkCommand::RequestStatus);
                                         outstanding_server_pings.insert(s.ip.clone(), server);
                                     }
                                     Err(e) => {
@@ -225,9 +226,7 @@ fn connect(ip: &str, name: String) -> Result<Server, std::io::Error> {
     match NetworkManager::connect(ip) {
         Ok(server) => {
             tracing::debug!("Connected to server.");
-            server
-                .send_command(NetworkCommand::Login(PROTOCOL, 25565, name))
-                .expect("Failed to login");
+            server.send_command(NetworkCommand::Login(PROTOCOL, 25565, name));
 
             Ok(server)
         }

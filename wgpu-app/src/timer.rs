@@ -29,6 +29,21 @@ impl Timer {
         }
     }
 
+    #[must_use]
+    pub fn new_with_period(period: f64) -> Self {
+        Self {
+            last: Instant::now(),
+            fps: 0,
+            last_delta: 0.0,
+            tick_duration: period,
+            frame_count: 0,
+            frame_time: 0.0,
+            fps_update_time: 0.25,
+
+            abs_time: 0.0,
+        }
+    }
+
     /// Reset time to 0
     pub fn reset(&mut self) {
         self.last = Instant::now();

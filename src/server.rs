@@ -10,7 +10,7 @@ use mcproto_rs::{
         PlayTeleportConfirmSpec, PlayerInfoAction,
     },
 };
-use wgpu_app::context::Context;
+use wgpu_app::{context::Context, Timer};
 use winit::keyboard::KeyCode;
 
 use crate::{
@@ -37,6 +37,8 @@ pub struct Server {
     world_time: i64,
     day_time: i64,
 
+    position_update_timer: Timer,
+
     player: Player,
     chat: Chat,
 
@@ -48,9 +50,14 @@ pub struct Server {
     difficulty: Difficulty,
     difficulty_locked: bool,
 
-    pub client_disconnect: bool,
-    pub server_disconnect: bool,
-    pub disconnect_reason: Option<String>,
+    pub connection: ConnectionState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectionState {
+    Connected,
+    ClientDisconnected,
+    ServerDisconnected(String),
 }
 
 /// The input state of the player.
@@ -71,8 +78,9 @@ pub enum InputState {
 }
 
 impl Server {
-    pub fn new(network_destination: String, network: NetworkChannel) -> Server {
-        Server {
+    #[must_use]
+    pub fn new(network_destination: String, network: NetworkChannel) -> Self {
+        Self {
             network_destination,
             network,
 
@@ -86,38 +94,44 @@ impl Server {
 
             world: World::new(),
 
+            position_update_timer: Timer::new_with_period(0.05),
+
             entities: HashMap::new(),
             players: HashMap::new(),
 
             difficulty: Difficulty::Easy,
             difficulty_locked: false,
 
-            client_disconnect: false,
-            server_disconnect: false,
-            disconnect_reason: None,
+            connection: ConnectionState::Connected,
         }
     }
 
+    #[must_use]
     pub fn get_network_destination(&self) -> &str {
         &self.network_destination
     }
 
+    #[must_use]
     pub fn get_input_state(&self) -> InputState {
         self.input_state
     }
 
+    #[must_use]
     pub fn get_world_time(&self) -> i64 {
         self.world_time
     }
 
+    #[must_use]
     pub fn get_day_time(&self) -> i64 {
         self.day_time
     }
 
+    #[must_use]
     pub fn get_player(&self) -> &Player {
         &self.player
     }
 
+    #[must_use]
     pub fn get_chat(&self) -> &Chat {
         &self.chat
     }
@@ -126,22 +140,27 @@ impl Server {
         &mut self.chat
     }
 
+    #[must_use]
     pub fn get_world(&self) -> &World {
         &self.world
     }
 
+    #[must_use]
     pub fn get_entities(&self) -> &HashMap<i32, Entity> {
         &self.entities
     }
 
+    #[must_use]
     pub fn get_difficulty(&self) -> Difficulty {
         self.difficulty.clone()
     }
 
+    #[must_use]
     pub fn is_difficulty_locked(&self) -> bool {
         self.difficulty_locked
     }
 
+    #[must_use]
     pub fn is_paused(&self) -> bool {
         self.input_state == InputState::Paused
     }
@@ -154,12 +173,14 @@ impl Server {
         self.player.id = player_id;
     }
 
+    #[must_use]
     pub fn get_players(&self) -> &HashMap<UUID4, RemotePlayer> {
         &self.players
     }
 
     /// Generates a sky colour based on a provided base colour and the current time of day on the
     /// server
+    #[must_use]
     pub fn get_sky_colour(&self, col: &[f64; 3]) -> DVec3 {
         const LIGHTEST: i64 = 9_000;
         let lerp = (((self.day_time - LIGHTEST) as f64 / 24_000.0) * PI * 2.0).cos() / 2.0 + 0.5;
@@ -169,24 +190,18 @@ impl Server {
     }
 
     /// Attempts to send a packet over the provided (possible) network channel
-    pub fn send_packet(&self, packet: Vec<u8>) -> Option<()> {
-        match self.network.send.send(NetworkCommand::SendPacket(packet)) {
-            Ok(_) => Some(()),
-            Err(e) => {
-                tracing::error!("Failed to communicate with network commander: {:?}", e);
-                panic!("Disconnected");
-            }
+    pub fn send_packet(&self, packet: Vec<u8>) {
+        if let Err(e) = self.network.send.send(NetworkCommand::SendPacket(packet)) {
+            tracing::error!("Failed to communicate with network commander: {:?}", e);
+            panic!("Disconnected");
         }
     }
 
     /// Attempts to send a packet over the provided (possible) network channel
-    pub fn send_command(&self, command: NetworkCommand) -> Option<()> {
-        match self.network.send.send(command) {
-            Ok(_) => Some(()),
-            Err(e) => {
-                tracing::error!("Failed to communicate with network commander: {:?}", e);
-                panic!("Disconnected");
-            }
+    pub fn send_command(&self, command: NetworkCommand) {
+        if let Err(e) = self.network.send.send(command) {
+            tracing::error!("Failed to communicate with network commander: {:?}", e);
+            panic!("Disconnected");
         }
     }
 
@@ -246,14 +261,34 @@ impl Server {
                         tracing::error!(
                             "Could not communicate with server. Assuming disconnected."
                         );
-                        self.server_disconnect = true;
-                        if self.disconnect_reason.is_none() {
-                            self.disconnect_reason = Some(String::from("Server forced disconnect. (You were probably sending too many connection requests)"));
+
+                        if self.connection == ConnectionState::Connected {
+                            self.connection = ConnectionState::ServerDisconnected(String::from("Server forced disconnect. (You were probably sending too many connection requests)"));
                         }
                         return;
                     }
                 },
             }
+        }
+
+        // Send player position updates
+        if self.position_update_timer.go().is_some() && self.player.id != 0 {
+            self.send_packet(encode(PacketType::PlayClientPlayerPositionAndRotation(
+                PlayClientPlayerPositionAndRotationSpec {
+                    feet_location: EntityLocation {
+                        position: types::Vec3 {
+                            x: self.get_player().get_position().x,
+                            y: self.get_player().get_position().y,
+                            z: self.get_player().get_position().z,
+                        },
+                        rotation: types::EntityRotation {
+                            yaw: self.get_player().get_orientation().get_yaw() as f32,
+                            pitch: self.get_player().get_orientation().get_pitch() as f32,
+                        },
+                    },
+                    on_ground: true,
+                },
+            )));
         }
     }
 
@@ -273,7 +308,7 @@ impl Server {
         self.handle_mouse_movement(ctx, delta, settings);
     }
 
-    fn handle_paused_state(&mut self, ctx: &Context, delta: f64, settings: &mut Settings) {
+    fn handle_paused_state(&mut self, ctx: &Context, _delta: f64, _settings: &mut Settings) {
         if ctx.keyboard.pressed_this_frame(KeyCode::Escape) {
             self.input_state = InputState::Playing;
         }
@@ -302,7 +337,7 @@ impl Server {
         self.handle_keyboard_movement(ctx, delta, settings);
     }
 
-    fn handle_chat_open_state(&mut self, ctx: &Context, delta: f64, settings: &mut Settings) {
+    fn handle_chat_open_state(&mut self, ctx: &Context, _delta: f64, _settings: &mut Settings) {
         if ctx.keyboard.pressed_this_frame(KeyCode::Escape) {
             self.input_state = InputState::Playing;
         } else if ctx.keyboard.pressed_this_frame(KeyCode::Enter) {
@@ -316,7 +351,7 @@ impl Server {
         }
     }
 
-    pub fn handle_mouse_movement(&mut self, ctx: &Context, delta: f64, settings: &mut Settings) {
+    pub fn handle_mouse_movement(&mut self, ctx: &Context, _delta: f64, settings: &mut Settings) {
         let off = ctx.mouse.get_delta();
         self.player.get_orientation_mut().rotate(
             off.0 as f64 * 0.05 * settings.mouse_sensitivity,
@@ -324,7 +359,12 @@ impl Server {
         );
     }
 
-    pub fn handle_keyboard_movement(&mut self, ctx: &Context, delta: f64, settings: &mut Settings) {
+    pub fn handle_keyboard_movement(
+        &mut self,
+        ctx: &Context,
+        delta: f64,
+        _settings: &mut Settings,
+    ) {
         let vel = 14.0 * delta;
 
         if ctx.keyboard.is_pressed(KeyCode::KeyW) {
@@ -386,11 +426,13 @@ impl Server {
             .send
             .send(NetworkCommand::Disconnect)
             .expect("Failed to send message to network thread.");
-        self.client_disconnect = true;
+        self.connection = ConnectionState::ClientDisconnected;
     }
 
-    /// Handles a message from the NetworkManager
-    fn handle_message(&mut self, comm: NetworkCommand, ctx: &Context) {
+    /// Handles a message from the `NetworkManager`
+    #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
+    fn handle_message(&mut self, comm: NetworkCommand, _ctx: &Context) {
+        #[allow(clippy::enum_glob_use)]
         use NetworkCommand::*;
 
         match comm {
@@ -415,19 +457,24 @@ impl Server {
                     }
 
                     PacketType::PlayDisconnect(pack) => {
-                        self.disconnect_reason = pack.reason.to_traditional();
-                        tracing::info!("Disconnected from server: {:?}", self.disconnect_reason);
-                        self.server_disconnect = true;
+                        let disconnect_reason = pack.reason.to_traditional();
+                        tracing::info!("Disconnected from server: {disconnect_reason:?}");
+                        self.connection = ConnectionState::ServerDisconnected(
+                            disconnect_reason.unwrap_or_else(|| String::from("No reason given")),
+                        );
                     }
 
-                    PacketType::LoginSuccess(pack) => {
+                    PacketType::LoginSuccess(_) => {
                         tracing::info!("Successfully Logged in!");
                     }
 
                     PacketType::LoginDisconnect(pack) => {
                         tracing::info!("Disconnected during login");
-                        self.server_disconnect = true;
-                        self.disconnect_reason = pack.message.to_traditional();
+                        self.connection = ConnectionState::ServerDisconnected(
+                            pack.message
+                                .to_traditional()
+                                .unwrap_or_else(|| String::from("No reason given")),
+                        );
                     }
 
                     PacketType::PlayJoinGame(id) => {
@@ -458,9 +505,9 @@ impl Server {
                                 // PLAYER_INDEX as u32,
                                 0,
                                 0,
-                                pack.location.position.x as f64,
-                                pack.location.position.y as f64,
-                                pack.location.position.z as f64,
+                                pack.location.position.x,
+                                pack.location.position.y,
+                                pack.location.position.z,
                                 pack.location.rotation.yaw.value as f64 / 255.0,
                                 pack.location.rotation.pitch.value as f64 / 255.0,
                                 pack.location.rotation.pitch.value as f64 / 255.0,
@@ -472,16 +519,16 @@ impl Server {
                     }
 
                     PacketType::PlaySpawnLivingEntity(pack) => {
-                        match self.entities.insert(
+                        self.entities.insert(
                             pack.entity_id.0,
                             Entity::new_with_values(
                                 pack.entity_id.0,
                                 pack.entity_uuid,
                                 pack.entity_type.0 as u32,
                                 0,
-                                pack.location.position.x as f64,
-                                pack.location.position.y as f64,
-                                pack.location.position.z as f64,
+                                pack.location.position.x,
+                                pack.location.position.y,
+                                pack.location.position.z,
                                 pack.location.rotation.yaw.value as f64 / 255.0,
                                 pack.location.rotation.pitch.value as f64 / 255.0,
                                 pack.head_pitch.value as f64 / 255.0,
@@ -489,10 +536,7 @@ impl Server {
                                 pack.velocity.y as f64 / 400.0,
                                 pack.velocity.z as f64 / 400.0,
                             ),
-                        ) {
-                            Some(_) => {}
-                            None => {}
-                        }
+                        );
                     }
 
                     PacketType::PlaySpawnEntity(pack) => {
@@ -523,95 +567,77 @@ impl Server {
                     }
 
                     PacketType::PlayEntityPosition(pack) => {
-                        match self.entities.get_mut(&pack.entity_id.0) {
-                            Some(ent) => {
-                                let new_pos = ent.last_pos
-                                    + DVec3::new(
-                                        (pack.delta.x as f64) / 4096.0,
-                                        (pack.delta.y as f64) / 4096.0,
-                                        (pack.delta.z as f64) / 4096.0,
-                                    );
-                                ent.pos = new_pos;
-                                ent.last_pos = new_pos;
-                            }
-                            None => {}
+                        if let Some(ent) = self.entities.get_mut(&pack.entity_id.0) {
+                            let new_pos = ent.last_pos
+                                + DVec3::new(
+                                    (pack.delta.x as f64) / 4096.0,
+                                    (pack.delta.y as f64) / 4096.0,
+                                    (pack.delta.z as f64) / 4096.0,
+                                );
+                            ent.pos = new_pos;
+                            ent.last_pos = new_pos;
                         }
                     }
 
                     PacketType::PlayEntityPositionAndRotation(pack) => {
-                        match self.entities.get_mut(&pack.entity_id.0) {
-                            Some(ent) => {
-                                let new_pos = ent.last_pos
-                                    + DVec3::new(
-                                        (pack.delta.position.x as f64) / 4096.0,
-                                        (pack.delta.position.y as f64) / 4096.0,
-                                        (pack.delta.position.z as f64) / 4096.0,
-                                    );
-                                ent.pos = new_pos;
-                                ent.last_pos = new_pos;
-                                ent.ori.set(
-                                    pack.delta.rotation.yaw.value as f64 / 256.0,
-                                    pack.delta.rotation.pitch.value as f64 / 256.0,
+                        if let Some(ent) = self.entities.get_mut(&pack.entity_id.0) {
+                            let new_pos = ent.last_pos
+                                + DVec3::new(
+                                    (pack.delta.position.x as f64) / 4096.0,
+                                    (pack.delta.position.y as f64) / 4096.0,
+                                    (pack.delta.position.z as f64) / 4096.0,
                                 );
-                                ent.on_ground = pack.on_ground;
-                            }
-                            None => {}
+                            ent.pos = new_pos;
+                            ent.last_pos = new_pos;
+                            ent.ori.set(
+                                pack.delta.rotation.yaw.value as f64 / 256.0,
+                                pack.delta.rotation.pitch.value as f64 / 256.0,
+                            );
+                            ent.on_ground = pack.on_ground;
                         }
                     }
 
                     PacketType::PlayEntityRotation(pack) => {
-                        match self.entities.get_mut(&pack.entity_id.0) {
-                            Some(ent) => {
-                                ent.ori.set(
-                                    pack.rotation.yaw.value as f64 / 256.0,
-                                    pack.rotation.pitch.value as f64 / 256.0,
-                                );
-                                ent.on_ground = pack.on_ground;
-                            }
-                            None => {}
+                        if let Some(ent) = self.entities.get_mut(&pack.entity_id.0) {
+                            ent.ori.set(
+                                pack.rotation.yaw.value as f64 / 256.0,
+                                pack.rotation.pitch.value as f64 / 256.0,
+                            );
+                            ent.on_ground = pack.on_ground;
                         }
                     }
 
                     PacketType::PlayEntityHeadLook(pack) => {
-                        match self.entities.get_mut(&pack.entity_id.0) {
-                            Some(ent) => {
-                                ent.ori_head.set(
-                                    pack.head_yaw.value as f64 / 256.0,
-                                    ent.ori_head.get_pitch(),
-                                );
-                            }
-                            None => {}
+                        if let Some(ent) = self.entities.get_mut(&pack.entity_id.0) {
+                            ent.ori_head.set(
+                                f64::from(pack.head_yaw.value) / 256.0,
+                                ent.ori_head.get_pitch(),
+                            );
                         }
                     }
 
                     PacketType::PlayEntityVelocity(pack) => {
-                        match self.entities.get_mut(&pack.entity_id.0) {
-                            Some(ent) => {
-                                ent.vel = DVec3::new(
-                                    pack.velocity.x as f64 / 400.0,
-                                    pack.velocity.y as f64 / 400.0,
-                                    pack.velocity.z as f64 / 400.0,
-                                );
-                            }
-                            None => {}
+                        if let Some(ent) = self.entities.get_mut(&pack.entity_id.0) {
+                            ent.vel = DVec3::new(
+                                f64::from(pack.velocity.x) / 400.0,
+                                f64::from(pack.velocity.y) / 400.0,
+                                f64::from(pack.velocity.z) / 400.0,
+                            );
                         }
                     }
 
                     PacketType::PlayEntityTeleport(pack) => {
-                        match self.entities.get_mut(&pack.entity_id.0) {
-                            Some(ent) => {
-                                ent.pos = DVec3::new(
-                                    pack.location.position.x as f64,
-                                    pack.location.position.y as f64,
-                                    pack.location.position.z as f64,
-                                );
-                                ent.ori.set(
-                                    pack.location.rotation.yaw.value as f64 / 256.0,
-                                    pack.location.rotation.pitch.value as f64 / 256.0,
-                                );
-                                ent.on_ground = pack.on_ground;
-                            }
-                            None => {}
+                        if let Some(ent) = self.entities.get_mut(&pack.entity_id.0) {
+                            ent.pos = DVec3::new(
+                                pack.location.position.x,
+                                pack.location.position.y,
+                                pack.location.position.z,
+                            );
+                            ent.ori.set(
+                                f64::from(pack.location.rotation.yaw.value) / 256.0,
+                                f64::from(pack.location.rotation.pitch.value) / 256.0,
+                            );
+                            ent.on_ground = pack.on_ground;
                         }
                     }
 
@@ -619,13 +645,13 @@ impl Server {
                         tracing::debug!("Player position updated!");
 
                         self.player.set_position(DVec3::new(
-                            pack.location.position.x as f64,
-                            pack.location.position.y as f64,
-                            pack.location.position.z as f64,
+                            pack.location.position.x,
+                            pack.location.position.y,
+                            pack.location.position.z,
                         ));
                         self.player.get_orientation_mut().set(
-                            pack.location.rotation.yaw as f64,
-                            pack.location.rotation.pitch as f64,
+                            f64::from(pack.location.rotation.yaw),
+                            f64::from(pack.location.rotation.pitch),
                         );
 
                         self.send_packet(encode(PacketType::PlayTeleportConfirm(
@@ -634,19 +660,14 @@ impl Server {
                             },
                         )));
 
-                        let px = self.player.get_position().x;
-                        let py = self.player.get_position().y;
-                        let pz = self.player.get_position().z;
-
+                        let x = self.player.get_position().x;
+                        let y = self.player.get_position().y;
+                        let z = self.player.get_position().z;
                         self.send_packet(encode(PacketType::PlayClientPlayerPositionAndRotation(
                             PlayClientPlayerPositionAndRotationSpec {
                                 on_ground: (true),
                                 feet_location: EntityLocation {
-                                    position: types::Vec3 {
-                                        x: px as f64,
-                                        y: py as f64,
-                                        z: pz as f64,
-                                    },
+                                    position: types::Vec3 { x, y, z },
                                     rotation: pack.location.rotation,
                                 },
                             },

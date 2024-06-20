@@ -1,7 +1,8 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::mpsc::TryRecvError};
 
 use mcproto_rs::status;
-use server::Server;
+use network::NetworkCommand;
+use server::{InputState, Server};
 use settings::Settings;
 use tracing_subscriber::{prelude::*, EnvFilter};
 use wgpu_app::{utils::persistent_window::PersistentWindowManager, Application};
@@ -24,7 +25,7 @@ pub mod world;
 type WindowManagerType = App;
 type WindowManager = PersistentWindowManager<WindowManagerType>;
 
-struct App {
+pub struct App {
     settings: Settings,
 
     server: Option<Server>,
@@ -66,6 +67,44 @@ impl Application for App {
 
     fn update(&mut self, t: &wgpu_app::Timer, ctx: &mut wgpu_app::context::Context) {
         let delta = t.delta();
+
+        // Server stuff
+        if let Some(server) = &mut self.server {
+            // Update
+            server.update(ctx, delta, &mut self.settings);
+
+            // Mouse handling
+            ctx.block_gui_tab_input = server.get_input_state() == InputState::InteractingInfo;
+            ctx.block_gui_input = server.should_grab_mouse();
+
+            // TODO - Context grab and hide mouse
+
+            // Disconnect
+            match &server.connection {
+                server::ConnectionState::Connected => {}
+                server::ConnectionState::ClientDisconnected => self.server = None,
+                server::ConnectionState::ServerDisconnected(reason) => {
+                    self.window_manager
+                        .push(gui::disconnect_window(Some(reason.clone())));
+                    self.server = None;
+                }
+            }
+        } else {
+            // Don't get stuck in the main menu without being able to interact with the UI
+            ctx.block_gui_input = false;
+            ctx.block_gui_tab_input = false;
+        }
+
+        // Outstanding server pings
+        self.outstanding_server_pings
+            .retain(|k, v| match v.network.recv.try_recv() {
+                Ok(NetworkCommand::ReceiveStatus(status)) => {
+                    self.server_pings.insert(k.clone(), status);
+                    false
+                }
+                Err(TryRecvError::Disconnected) => false,
+                _ => true,
+            });
     }
 
     fn render(
@@ -115,6 +154,14 @@ impl Application for App {
         ctx.egui
             .render(&mut ctx.wgpu_state, &view, &mut encoder, |gui_ctx| {
                 gui::render(gui_ctx, self, t);
+
+                // Render windows
+                if self.server.as_ref().map_or(true, Server::is_paused) {
+                    let mut dummy_manager = WindowManager::new();
+                    std::mem::swap(&mut self.window_manager, &mut dummy_manager);
+                    dummy_manager.render(self, gui_ctx);
+                    std::mem::swap(&mut self.window_manager, &mut dummy_manager);
+                }
             });
 
         // Render

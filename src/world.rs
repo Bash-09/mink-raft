@@ -10,16 +10,21 @@ use self::chunks::{block_pos_to_index, BlockIndex, Chunk, ChunkSection};
 pub mod chunk_builder;
 pub mod chunks;
 
+/// Block position in the world
 pub type WorldCoords = IVec3;
+/// Block position in a chunk
 pub type ChunkCoords = IVec3;
+/// Block position in a chunk section
 pub type SectionCoords = IVec3;
+/// Chunk position in world (ChunkLocation(1,1) == WorldCoords(16,~,16))
 pub type ChunkLocation = IVec2;
+/// Section position in world (SectionLocation(1,1,1) == WorldCoords(16,16,16))
 pub type SectionLocation = IVec3;
 
 trait Directional {
     fn north() -> Self;
-    fn east() -> Self;
     fn south() -> Self;
+    fn east() -> Self;
     fn west() -> Self;
 }
 
@@ -31,8 +36,9 @@ pub struct World {
 }
 
 impl World {
-    pub fn new() -> World {
-        World {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
             chunks: HashMap::new(),
             chunks_to_generate: Vec::new(),
             sections_to_generate: Vec::new(),

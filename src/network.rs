@@ -381,44 +381,30 @@ impl NetworkManager {
         })))
         .expect("Failed to send Status Ping");
 
-        let ping;
-        let mut status: status::StatusSpec;
-
         loop {
             match self.next_packet() {
-                Ok(pack) => match pack {
-                    Ok(pack) => match pack {
-                        PacketType::StatusResponse(pack) => {
-                            ping = (Instant::now() - now).as_millis() as u32;
-                            status = pack.response;
-                            break;
-                        }
-                        _ => {
-                            tracing::warn!(
-                                "Got unexpected packet waiting for status response: {:?}",
-                                pack
-                            );
-                        }
-                    },
-                    Err(e) => {
-                        panic!("Error decoding packet: {}", e);
-                    }
-                },
+                Ok(Ok(PacketType::StatusResponse(pack))) => {
+                    // let ping = (Instant::now() - now).as_millis() as u32;
+                    return Some(pack.response);
+                }
+                Ok(Ok(pack)) => {
+                    tracing::warn!(
+                        "Got unexpected packet waiting for status response: {:?}",
+                        pack
+                    );
+                }
+                Ok(Err(e)) => {
+                    panic!("Error decoding packet: {e}");
+                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                    continue;
+                }
                 Err(e) => {
-                    if e.kind() == ErrorKind::WouldBlock {
-                        continue;
-                    } else {
-                        tracing::error!(
-                            "Couldn't get response from server status request: {:?}",
-                            e
-                        );
-                        return None;
-                    }
+                    tracing::error!("Couldn't get response from server status request: {:?}", e);
+                    return None;
                 }
             }
         }
-
-        Some(status)
     }
 
     /// Sends a packet to the server
